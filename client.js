@@ -79,9 +79,13 @@ window.__ModuleLoader__.load({
           if (doc) doc.scrollTop = doc.scrollHeight;
         } catch (e) { /* 忽略：滚动只是锦上添花 */ }
       };
-      setTimeout(attempt, 120);
-      setTimeout(attempt, 400);
-      setTimeout(attempt, 900);
+      let left = 0;
+      const tick = () => {
+        attempt();
+        left += 1;
+        if (left < 16) setTimeout(tick, 200);
+      };
+      setTimeout(tick, 120);
     }
 
     function scrollPluginPageToTop() {
@@ -106,6 +110,27 @@ window.__ModuleLoader__.load({
       };
       attempt();
       setTimeout(attempt, 80);
+    }
+
+    function JumpToBottomAction(props) {
+      const subject = props && props.subject;
+      if (!subject || subject.kind !== "bundle") return null;
+      return h("button", {
+        type: "button",
+        style: {
+          background: "transparent",
+          border: "1px solid currentColor",
+          borderRadius: "6px",
+          color: "inherit",
+          cursor: "pointer",
+          fontSize: "12px",
+          lineHeight: "18px",
+          opacity: 0.72,
+          padding: "2px 10px"
+        },
+        title: "跳到详情页底部（版本区块）",
+        onClick: () => scrollPluginPageToBottom()
+      }, "↓ 到底部");
     }
 
     function BackToTopSection(props) {
@@ -329,7 +354,7 @@ window.__ModuleLoader__.load({
       const failed = installed.filter((b) => rows[b.name] && rows[b.name].status === "error").length;
       const pending = installed.filter((b) => b.updatable === true && b.official !== true && !rows[b.name]).length;
       const header = h("div", { style: S.bar },
-        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v13"),
+        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v14"),
         h("span", { style: S.muted },
           state.status === "loading" ? "正在读取已安装组合包…" :
           state.status === "error" ? "读取失败" :
@@ -434,6 +459,15 @@ window.__ModuleLoader__.load({
           }, (ownerProps) => h(TabBoundary, null, h(VersionsTab, Object.assign({ ctx }, ownerProps || {}))));
           return typeof off === "function" ? off : () => {};
         });
+        ctx.slots.inject("plugins.detail.actions", () => {
+          const off = ctx.slots.register({
+            name: "plugins.detail.actions",
+            id: "dsh-plugin-versions-bottom",
+            order: 0
+          }, (ownerProps) => h(JumpToBottomAction, ownerProps || {}));
+          return typeof off === "function" ? off : () => {};
+        });
+
         ctx.slots.inject("plugins.detail.section", () => {
           const off = ctx.slots.register({
             name: "plugins.detail.section",
