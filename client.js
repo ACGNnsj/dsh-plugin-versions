@@ -129,11 +129,52 @@ window.__ModuleLoader__.load({
       );
     }
 
+    const CACHE_KEY = "dsh-plugin-versions:cache:v1";
+
+    function readCache() {
+      try {
+        const raw = window.localStorage.getItem(CACHE_KEY);
+        if (!raw) return null;
+        const d = JSON.parse(raw);
+        if (!d || typeof d !== "object" || !Array.isArray(d.bundles) || !d.rows) return null;
+        return d;
+      } catch (e) { return null; }
+    }
+
+    function writeCache(bundles, rows, at) {
+      try {
+        const keep = {};
+        Object.keys(rows || {}).forEach((k) => {
+          const r = rows[k];
+          if (r && r.status === "ready") keep[k] = r;
+        });
+        window.localStorage.setItem(CACHE_KEY, JSON.stringify({
+          at: at || Date.now(),
+          bundles: bundles || [],
+          rows: keep
+        }));
+      } catch (e) { /* 缓存写失败不影响使用 */ }
+    }
+
+    function clockText(ms) {
+      try {
+        const d = new Date(ms);
+        return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+      } catch (e) { return ""; }
+    }
+
     function VersionsTab(props) {
       const ctx = props.ctx;
       const openPackage = props.openPackage;
-      const [state, setState] = React.useState({ status: "loading", bundles: [], error: null });
-      const [rows, setRows] = React.useState({});
+      const cached = readCache();
+      const [state, setState] = React.useState(
+        cached
+          ? { status: "ready", bundles: cached.bundles, error: null }
+          : { status: "loading", bundles: [], error: null }
+      );
+      const [rows, setRows] = React.useState(cached ? cached.rows : {});
+      const [checkedAt, setCheckedAt] = React.useState(cached ? cached.at || 0 : 0);
+      const [refreshing, setRefreshing] = React.useState(true);
       const [nonce, setNonce] = React.useState(0);
       const [pmState, setPmState] = React.useState(null);
 
@@ -153,8 +194,7 @@ window.__ModuleLoader__.load({
 
         const load = (pm) => {
           setPmState(pm);
-          setState({ status: "loading", bundles: [], error: null });
-          setRows({});
+          setRefreshing(true);
           Promise.resolve().then(() => pm.listBundles()).then((res) => {
             if (cancelled) return;
             if (res && res.ok === false) {
@@ -163,7 +203,9 @@ window.__ModuleLoader__.load({
               return;
             }
             const value = res && res.ok === true ? res.value : res;
-            setState({ status: "ready", bundles: Array.isArray(value) ? value : [], error: null });
+            const list = Array.isArray(value) ? value : [];
+            setState({ status: "ready", bundles: list, error: null });
+            setRows((prev) => { writeCache(list, prev, Date.now()); return prev; });
           }).catch((err) => {
             if (cancelled) return;
             setState({ status: "error", bundles: [], error: String((err && err.message) || err) });
@@ -182,7 +224,6 @@ window.__ModuleLoader__.load({
           setState({ status: "error", bundles: [], error: "拿不到 pluginManager。" + why });
         };
 
-        setState({ status: "loading", bundles: [], error: null });
         attempt();
         return () => { cancelled = true; if (timer) clearTimeout(timer); };
       }, [nonce]);
@@ -194,7 +235,9 @@ window.__ModuleLoader__.load({
         (async () => {
           for (const b of queue) {
             if (cancelled) return;
-            setRows((prev) => Object.assign({}, prev, { [b.name]: { status: "loading" } }));
+            setRows((prev) => (prev[b.name] && prev[b.name].status === "ready")
+              ? prev
+              : Object.assign({}, prev, { [b.name]: { status: "loading" } }));
             let next;
             try {
               const res = await pmState.listVersions(b.name, {});
@@ -208,8 +251,15 @@ window.__ModuleLoader__.load({
               next = { status: "error", error: String((err && err.message) || err) };
             }
             if (cancelled) return;
-            setRows((prev) => Object.assign({}, prev, { [b.name]: next }));
+            setRows((prev) => {
+              const nextRows = Object.assign({}, prev, { [b.name]: next });
+              writeCache(state.bundles, nextRows, Date.now());
+              return nextRows;
+            });
           }
+          if (cancelled) return;
+          setCheckedAt(Date.now());
+          setRefreshing(false);
         })();
         return () => { cancelled = true; };
       }, [state.status, state.bundles, pmState]);
@@ -220,11 +270,16 @@ window.__ModuleLoader__.load({
       const failed = installed.filter((b) => rows[b.name] && rows[b.name].status === "error").length;
       const pending = installed.filter((b) => b.updatable === true && b.official !== true && !rows[b.name]).length;
       const header = h("div", { style: S.bar },
-        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v10"),
+        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v11"),
         h("span", { style: S.muted },
           state.status === "loading" ? "正在读取已安装组合包…" :
           state.status === "error" ? "读取失败" :
           ((newer > 0 ? newer + " 个可更新" : (pending > 0 ? "正在检查…" : "全部已是最新")) + (failed > 0 ? " · " + failed + " 个检查失败" : "") + " · 共 " + installed.length + " 个已安装")),
+        h("span", { style: { opacity: 0.5, fontSize: "11px", marginLeft: "8px" } },
+          checkedAt ? ("检查于 " + clockText(checkedAt)) : ""),
+        refreshing && state.status !== "loading"
+          ? h("span", { style: { opacity: 0.5, fontSize: "11px", marginLeft: "6px" } }, "刷新中…")
+          : null,
         h("span", { style: { flex: "1 1 auto" } }),
         h("button", { style: S.btn, onClick: () => setNonce(nonce + 1), disabled: state.status === "loading" }, "刷新")
       );
