@@ -144,9 +144,12 @@ window.__ModuleLoader__.load({
     function writeCache(bundles, rows, at) {
       try {
         const keep = {};
+        const stamp = at || Date.now();
         Object.keys(rows || {}).forEach((k) => {
           const r = rows[k];
-          if (r && r.status === "ready") keep[k] = r;
+          if (r && r.status === "ready") {
+            keep[k] = { status: "ready", list: r.list || null, at: r.at || stamp };
+          }
         });
         window.localStorage.setItem(CACHE_KEY, JSON.stringify({
           at: at || Date.now(),
@@ -173,6 +176,8 @@ window.__ModuleLoader__.load({
           : { status: "loading", bundles: [], error: null }
       );
       const [rows, setRows] = React.useState(cached ? cached.rows : {});
+      const rowsRef = React.useRef(rows);
+      rowsRef.current = rows;
       const [checkedAt, setCheckedAt] = React.useState(cached ? cached.at || 0 : 0);
       const [refreshing, setRefreshing] = React.useState(true);
       const [nonce, setNonce] = React.useState(0);
@@ -231,7 +236,14 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         if (state.status !== "ready" || !pmState) return undefined;
         let cancelled = false;
-        const queue = state.bundles.filter((b) => b && b.installed && b.name && b.updatable && !b.official);
+        const age = (name) => {
+          const r = rowsRef.current[name];
+          return (r && r.status === "ready" && r.at) ? r.at : 0;
+        };
+        const queue = state.bundles
+          .filter((b) => b && b.installed && b.name && b.updatable && !b.official)
+          .slice()
+          .sort((a, b) => age(a.name) - age(b.name));
         (async () => {
           for (const b of queue) {
             if (cancelled) return;
@@ -245,7 +257,7 @@ window.__ModuleLoader__.load({
                 const e = res.error || {};
                 next = { status: "error", error: String(e.message || e.code || "listVersions 失败") };
               } else {
-                next = { status: "ready", list: (res && res.ok === true ? res.value : res) || null };
+                next = { status: "ready", list: (res && res.ok === true ? res.value : res) || null, at: Date.now() };
               }
             } catch (err) {
               next = { status: "error", error: String((err && err.message) || err) };
@@ -270,7 +282,7 @@ window.__ModuleLoader__.load({
       const failed = installed.filter((b) => rows[b.name] && rows[b.name].status === "error").length;
       const pending = installed.filter((b) => b.updatable === true && b.official !== true && !rows[b.name]).length;
       const header = h("div", { style: S.bar },
-        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v11"),
+        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v12"),
         h("span", { style: S.muted },
           state.status === "loading" ? "正在读取已安装组合包…" :
           state.status === "error" ? "读取失败" :
