@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Plugin Versions",
+    "description": "List installed bundles with their versions and update status, and open the official update page."
+  }
+}
