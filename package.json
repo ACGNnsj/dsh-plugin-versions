@@ -1,14 +1,37 @@
 {
   "name": "dsh-plugin-versions",
   "version": "0.1.0",
-  "private": true,
-  "description": "List installed DSH bundles with their versions and update status, and open the official update page.",
+  "description": "List installed DeepSeek Harness bundles with versions and update status, and jump straight to the official update page.",
   "type": "module",
   "main": "index.js",
   "icon": "icon.svg",
+  "license": "MIT",
+  "author": "ACGNnsj",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ACGNnsj/dsh-plugin-versions.git"
+  },
+  "homepage": "https://github.com/ACGNnsj/dsh-plugin-versions#readme",
+  "bugs": {
+    "url": "https://github.com/ACGNnsj/dsh-plugin-versions/issues"
+  },
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "plugin-manager",
+    "versions",
+    "update"
+  ],
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
-    "client": { "platform": "web", "inject": [] }
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    }
   },
   "exports": {
     ".": "./index.js",
@@ -18,5 +41,17 @@
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
-  "files": ["index.js", "client.js", "cordis.patch.yml", "locale", "icon.svg", "README.md"]
+  "files": [
+    "LICENSE",
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale",
+    "icon.svg",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
 }
