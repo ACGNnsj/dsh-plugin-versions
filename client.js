@@ -129,6 +129,53 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function parseVersion(text) {
+      const raw = String(text == null ? "" : text).trim().replace(/^v/i, "").split("+")[0];
+      const dash = raw.indexOf("-");
+      const coreText = dash >= 0 ? raw.slice(0, dash) : raw;
+      const core = coreText.split(".").map((x) => parseInt(x, 10) || 0);
+      const pre = dash >= 0 ? raw.slice(dash + 1).split(".") : null;
+      return { core: core, pre: pre };
+    }
+
+    function compareVersions(a, b) {
+      const x = parseVersion(a);
+      const y = parseVersion(b);
+      const len = Math.max(x.core.length, y.core.length);
+      for (let i = 0; i < len; i += 1) {
+        const dx = x.core[i] || 0;
+        const dy = y.core[i] || 0;
+        if (dx !== dy) return dx < dy ? -1 : 1;
+      }
+      if (!x.pre && !y.pre) return 0;
+      if (!x.pre) return 1;
+      if (!y.pre) return -1;
+      const n = Math.max(x.pre.length, y.pre.length);
+      for (let i = 0; i < n; i += 1) {
+        const px = x.pre[i];
+        const py = y.pre[i];
+        if (px === undefined) return -1;
+        if (py === undefined) return 1;
+        const nx = /^\d+$/.test(px);
+        const ny = /^\d+$/.test(py);
+        if (nx && ny) {
+          const d = parseInt(px, 10) - parseInt(py, 10);
+          if (d !== 0) return d < 0 ? -1 : 1;
+        } else if (nx) {
+          return -1;
+        } else if (ny) {
+          return 1;
+        } else if (px !== py) {
+          return px < py ? -1 : 1;
+        }
+      }
+      return 0;
+    }
+
+    function isNewer(candidate, installed) {
+      try { return compareVersions(candidate, installed) > 0; } catch (e) { return false; }
+    }
+
     const CACHE_KEY = "dsh-plugin-versions:cache:v1";
 
     function readCache() {
@@ -278,11 +325,11 @@ window.__ModuleLoader__.load({
 
       const installed = state.bundles.filter((b) => b && b.installed === true);
       const checked = installed.filter((b) => rows[b.name] && rows[b.name].status === "ready" && rows[b.name].list && rows[b.name].list.status === "listed");
-      const newer = checked.filter((b) => (rows[b.name].list.versions || []).length > 0).length;
+      const newer = checked.filter((b) => (rows[b.name].list.versions || []).some((v) => isNewer(v && v.version, b.version))).length;
       const failed = installed.filter((b) => rows[b.name] && rows[b.name].status === "error").length;
       const pending = installed.filter((b) => b.updatable === true && b.official !== true && !rows[b.name]).length;
       const header = h("div", { style: S.bar },
-        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v12"),
+        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v13"),
         h("span", { style: S.muted },
           state.status === "loading" ? "正在读取已安装组合包…" :
           state.status === "error" ? "读取失败" :
@@ -310,8 +357,8 @@ window.__ModuleLoader__.load({
         h("span", null, "组合包"), h("span", null, "当前版本"), h("span", null, "最新版本"), h("span", null, "状态"));
 
       const ordered = installed.slice().sort((a, b) => {
-        const ua = rows[a.name] && rows[a.name].list && (rows[a.name].list.versions || []).length > 0;
-        const ub = rows[b.name] && rows[b.name].list && (rows[b.name].list.versions || []).length > 0;
+        const ua = rows[a.name] && rows[a.name].list && (rows[a.name].list.versions || []).some((v) => isNewer(v && v.version, a.version));
+        const ub = rows[b.name] && rows[b.name].list && (rows[b.name].list.versions || []).some((v) => isNewer(v && v.version, b.version));
         if (ua === ub) return String(a.name).localeCompare(String(b.name));
         return ua ? -1 : 1;
       });
@@ -320,7 +367,10 @@ window.__ModuleLoader__.load({
         const canCheck = b.updatable === true && b.official !== true;
         const canOpen = typeof openPackage === "function" && canCheck;
         const listed = slot && slot.status === "ready" && slot.list && slot.list.status === "listed" ? slot.list : null;
-        const newest = listed && Array.isArray(listed.versions) && listed.versions.length > 0 ? listed.versions[0] : null;
+        const newerVersions = listed && Array.isArray(listed.versions)
+          ? listed.versions.filter((v) => v && isNewer(v.version, b.version))
+          : [];
+        const newest = newerVersions.length > 0 ? newerVersions[0] : null;
         let latestCell = "—";
         let latestTitle = "";
         let statusText = "";
