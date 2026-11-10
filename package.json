@@ -48,6 +48,8 @@
     "cordis.patch.yml",
     "locale",
     "icon.svg",
+    "assets/screenshot-versions-tab.png",
+    "screenshots.json",
     "README.md"
   ],
   "publishConfig": {
