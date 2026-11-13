@@ -55,7 +55,15 @@ icon.svg              列表图标
 
 ## 兼容性
 
-DSH 0.2.2 起，`pluginManager.listBundles()` 把「能否更新」从布尔 `updatable` 改成了 `update: "registry" | "git"`。本插件两个字段都认（`updateKind()`），新旧宿主都不会把整张表判成「无官方版本区块」。
+清单里声明了 DSH 版本依赖：
+
+```json
+"engines": { "dsh": ">=0.2.0-rc.1 <0.3.0-0" }
+```
+
+宿主在安装、启用、以及列出可安装版本时会校验这个区间（`evaluatePluginCompatibility()`，预发布版也计入区间），不满足就拒绝装载，而不是装上去再炸。
+
+字段层面还做了双兼容：DSH 0.2.2 起 `pluginManager.listBundles()` 把「能否更新」从布尔 `updatable` 改成了 `update: "registry" | "git"`，本插件两个字段都认（`updateKind()`），新旧宿主都不会把整张表判成「无官方版本区块」。
 
 ## 许可
 

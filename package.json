@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-versions",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "List installed DeepSeek Harness bundles with versions and update status, and jump straight to the official update page.",
   "type": "module",
   "main": "index.js",
@@ -24,6 +24,9 @@
     "versions",
     "update"
   ],
+  "engines": {
+    "dsh": ">=0.2.0-rc.1 <0.3.0-0"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
