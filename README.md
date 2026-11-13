@@ -53,6 +53,10 @@ icon.svg              列表图标
 
 只读调用 Host 的 `pluginManager.listBundles()` 与 `pluginManager.listVersions(name, {})`。前者不触网；后者每个包最多打 2 个 registry（含 fallback 镜像），单包最坏约 140 秒，因此必须串行且只查可更新的行。
 
+## 兼容性
+
+DSH 0.2.2 起，`pluginManager.listBundles()` 把「能否更新」从布尔 `updatable` 改成了 `update: "registry" | "git"`。本插件两个字段都认（`updateKind()`），新旧宿主都不会把整张表判成「无官方版本区块」。
+
 ## 许可
 
 MIT

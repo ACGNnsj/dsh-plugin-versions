@@ -20,8 +20,21 @@ window.__ModuleLoader__.load({
       click: { cursor: "pointer" }
     };
 
+    // 新版 Host 把「能否更新」从布尔 updatable 改成了 update: "registry" | "git"，
+    // 两个版本都要认，否则所有第三方包都会掉进「来源不支持更新」。
+    function updateKind(b) {
+      if (!b) return null;
+      if (typeof b.update === "string") return b.update;
+      if (b.updatable === true) return "registry";
+      return null;
+    }
+
+    function canCheckUpdates(b) {
+      return updateKind(b) === "registry" && b.official !== true;
+    }
+
     function describe(b) {
-      if (b.updatable) return "可更新";
+      if (updateKind(b) === "registry") return "可更新";
       if (!b.installed) return "未安装";
       if (b.official) return "跟随 DSH";
       if (b.optional) return "按需安装";
@@ -313,7 +326,7 @@ window.__ModuleLoader__.load({
           return (r && r.status === "ready" && r.at) ? r.at : 0;
         };
         const queue = state.bundles
-          .filter((b) => b && b.installed && b.name && b.updatable && !b.official)
+          .filter((b) => b && b.installed && b.name && canCheckUpdates(b))
           .slice()
           .sort((a, b) => age(a.name) - age(b.name));
         (async () => {
@@ -352,13 +365,13 @@ window.__ModuleLoader__.load({
       const checked = installed.filter((b) => rows[b.name] && rows[b.name].status === "ready" && rows[b.name].list && rows[b.name].list.status === "listed");
       const newer = checked.filter((b) => (rows[b.name].list.versions || []).some((v) => isNewer(v && v.version, b.version))).length;
       const failed = installed.filter((b) => rows[b.name] && rows[b.name].status === "error").length;
-      const pending = installed.filter((b) => b.updatable === true && b.official !== true && !rows[b.name]).length;
+      const pending = installed.filter((b) => canCheckUpdates(b) && !rows[b.name]).length;
       const header = h("div", { style: S.bar },
-        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v14"),
+        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v15"),
         h("span", { style: S.muted },
           state.status === "loading" ? "正在读取已安装组合包…" :
           state.status === "error" ? "读取失败" :
-          ((newer > 0 ? newer + " 个可更新" : (pending > 0 ? "正在检查…" : "全部已是最新")) + (failed > 0 ? " · " + failed + " 个检查失败" : "") + " · 共 " + installed.length + " 个已安装")),
+          ((newer > 0 ? newer + " 个可更新" : (pending > 0 ? "正在检查…" : (checked.length === 0 ? "没有可查的第三方包" : "全部已是最新"))) + (failed > 0 ? " · " + failed + " 个检查失败" : "") + " · 共 " + installed.length + " 个已安装")),
         h("span", { style: { opacity: 0.5, fontSize: "11px", marginLeft: "8px" } },
           checkedAt ? ("检查于 " + clockText(checkedAt)) : ""),
         refreshing && state.status !== "loading"
@@ -389,7 +402,7 @@ window.__ModuleLoader__.load({
       });
       const list = ordered.map((b) => {
         const slot = rows[b.name] || null;
-        const canCheck = b.updatable === true && b.official !== true;
+        const canCheck = canCheckUpdates(b);
         const canOpen = typeof openPackage === "function" && canCheck;
         const listed = slot && slot.status === "ready" && slot.list && slot.list.status === "listed" ? slot.list : null;
         const newerVersions = listed && Array.isArray(listed.versions)
@@ -402,7 +415,10 @@ window.__ModuleLoader__.load({
         let tone = null;
         if (b.official === true) {
           statusText = "随 DSH 更新";
-        } else if (b.updatable !== true) {
+        } else if (updateKind(b) === "git") {
+          statusText = "从 Git 安装";
+          latestTitle = "从 Git 提交安装的包，官方版本列表不可查";
+        } else if (updateKind(b) !== "registry") {
           statusText = "无官方版本区块";
           latestTitle = "这个包不是从 registry 安装的，官方不给版本区块";
         } else if (!slot) {
