@@ -218,6 +218,13 @@ window.__ModuleLoader__.load({
     // 每个 listVersions 是一次或多个 pnpm/网络请求；宿主内部还有自己的并发上限，
     // 所以外层压到 3 路：比串行快数倍，又不会一次打出几十个子进程。
     const CHECK_CONCURRENCY = 3;
+    // 这台机器直连 registry.npmjs.org 每次要 ~1 秒；国内镜像 ~75 毫秒，且宿主会把它当第一顺位、
+    // 镜像没收录时自动回落到配置的 registry。第一次查询兼当测速，慢就退回宿主配置。
+    const FAST_REGISTRY = "https://registry.npmmirror.com";
+    const PROBE_MS = 3000;
+    // 走镜像时每次查询只有几百毫秒，可以多开几路（实测 9 个包：3 路 1.66s、6 路 1.13s、9 路 0.77s）；
+    // 退回慢 registry 时仍是 3 路，避免一次打出几十个 pnpm 去抢那条 1 秒一条的链路。
+    const FAST_CONCURRENCY = 6;
 
     function readCache() {
       try {
@@ -332,38 +339,54 @@ window.__ModuleLoader__.load({
           .filter((b) => b && b.installed && b.name && canCheckUpdates(b))
           .slice()
           .sort((a, b) => age(a.name) - age(b.name));
+        const markLoading = (name) => setRows((prev) => ((prev[name] && prev[name].status === "ready")
+          ? prev
+          : Object.assign({}, prev, { [name]: { status: "loading" } })));
+        const fetchOne = async (name, options) => {
+          try {
+            const res = await pmState.listVersions(name, options);
+            if (res && res.ok === false) {
+              const e = res.error || {};
+              return { status: "error", error: String(e.message || e.code || "listVersions 失败") };
+            }
+            return { status: "ready", list: (res && res.ok === true ? res.value : res) || null, at: Date.now() };
+          } catch (err) {
+            return { status: "error", error: String((err && err.message) || err) };
+          }
+        };
+        const commit = (name, next) => setRows((prev) => {
+          const nextRows = Object.assign({}, prev, { [name]: next });
+          writeCache(state.bundles, nextRows, Date.now());
+          return nextRows;
+        });
         (async () => {
+          let hint = FAST_REGISTRY;
+          let rest = queue;
+          if (queue.length) {
+            const head = queue[0];
+            rest = queue.slice(1);
+            markLoading(head.name);
+            const t0 = Date.now();
+            const value = await fetchOne(head.name, { registry: FAST_REGISTRY });
+            if (Date.now() - t0 > PROBE_MS) hint = undefined;
+            if (cancelled) return;
+            commit(head.name, value);
+          }
+          const options = hint === undefined ? {} : { registry: hint };
           let cursor = 0;
           const worker = async () => {
             while (!cancelled) {
               const index = cursor;
               cursor += 1;
-              if (index >= queue.length) return;
-              const b = queue[index];
-              setRows((prev) => (prev[b.name] && prev[b.name].status === "ready")
-                ? prev
-                : Object.assign({}, prev, { [b.name]: { status: "loading" } }));
-              let next;
-              try {
-                const res = await pmState.listVersions(b.name, {});
-                if (res && res.ok === false) {
-                  const e = res.error || {};
-                  next = { status: "error", error: String(e.message || e.code || "listVersions 失败") };
-                } else {
-                  next = { status: "ready", list: (res && res.ok === true ? res.value : res) || null, at: Date.now() };
-                }
-              } catch (err) {
-                next = { status: "error", error: String((err && err.message) || err) };
-              }
+              if (index >= rest.length) return;
+              const b = rest[index];
+              markLoading(b.name);
+              const value = await fetchOne(b.name, options);
               if (cancelled) return;
-              setRows((prev) => {
-                const nextRows = Object.assign({}, prev, { [b.name]: next });
-                writeCache(state.bundles, nextRows, Date.now());
-                return nextRows;
-              });
+              commit(b.name, value);
             }
           };
-          const lanes = Math.min(CHECK_CONCURRENCY, queue.length);
+          const lanes = Math.min(hint === undefined ? CHECK_CONCURRENCY : FAST_CONCURRENCY, rest.length);
           const workers = [];
           for (let i = 0; i < lanes; i += 1) workers.push(worker());
           await Promise.all(workers);
@@ -380,7 +403,7 @@ window.__ModuleLoader__.load({
       const failed = installed.filter((b) => rows[b.name] && rows[b.name].status === "error").length;
       const pending = installed.filter((b) => canCheckUpdates(b) && !rows[b.name]).length;
       const header = h("div", { style: S.bar },
-        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v16"),
+        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v18"),
         h("span", { style: S.muted },
           state.status === "loading" ? "正在读取已安装组合包…" :
           state.status === "error" ? "读取失败" :
