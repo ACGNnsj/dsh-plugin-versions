@@ -215,6 +215,9 @@ window.__ModuleLoader__.load({
     }
 
     const CACHE_KEY = "dsh-plugin-versions:cache:v1";
+    // 每个 listVersions 是一次或多个 pnpm/网络请求；宿主内部还有自己的并发上限，
+    // 所以外层压到 3 路：比串行快数倍，又不会一次打出几十个子进程。
+    const CHECK_CONCURRENCY = 3;
 
     function readCache() {
       try {
@@ -330,30 +333,40 @@ window.__ModuleLoader__.load({
           .slice()
           .sort((a, b) => age(a.name) - age(b.name));
         (async () => {
-          for (const b of queue) {
-            if (cancelled) return;
-            setRows((prev) => (prev[b.name] && prev[b.name].status === "ready")
-              ? prev
-              : Object.assign({}, prev, { [b.name]: { status: "loading" } }));
-            let next;
-            try {
-              const res = await pmState.listVersions(b.name, {});
-              if (res && res.ok === false) {
-                const e = res.error || {};
-                next = { status: "error", error: String(e.message || e.code || "listVersions 失败") };
-              } else {
-                next = { status: "ready", list: (res && res.ok === true ? res.value : res) || null, at: Date.now() };
+          let cursor = 0;
+          const worker = async () => {
+            while (!cancelled) {
+              const index = cursor;
+              cursor += 1;
+              if (index >= queue.length) return;
+              const b = queue[index];
+              setRows((prev) => (prev[b.name] && prev[b.name].status === "ready")
+                ? prev
+                : Object.assign({}, prev, { [b.name]: { status: "loading" } }));
+              let next;
+              try {
+                const res = await pmState.listVersions(b.name, {});
+                if (res && res.ok === false) {
+                  const e = res.error || {};
+                  next = { status: "error", error: String(e.message || e.code || "listVersions 失败") };
+                } else {
+                  next = { status: "ready", list: (res && res.ok === true ? res.value : res) || null, at: Date.now() };
+                }
+              } catch (err) {
+                next = { status: "error", error: String((err && err.message) || err) };
               }
-            } catch (err) {
-              next = { status: "error", error: String((err && err.message) || err) };
+              if (cancelled) return;
+              setRows((prev) => {
+                const nextRows = Object.assign({}, prev, { [b.name]: next });
+                writeCache(state.bundles, nextRows, Date.now());
+                return nextRows;
+              });
             }
-            if (cancelled) return;
-            setRows((prev) => {
-              const nextRows = Object.assign({}, prev, { [b.name]: next });
-              writeCache(state.bundles, nextRows, Date.now());
-              return nextRows;
-            });
-          }
+          };
+          const lanes = Math.min(CHECK_CONCURRENCY, queue.length);
+          const workers = [];
+          for (let i = 0; i < lanes; i += 1) workers.push(worker());
+          await Promise.all(workers);
           if (cancelled) return;
           setCheckedAt(Date.now());
           setRefreshing(false);
@@ -367,7 +380,7 @@ window.__ModuleLoader__.load({
       const failed = installed.filter((b) => rows[b.name] && rows[b.name].status === "error").length;
       const pending = installed.filter((b) => canCheckUpdates(b) && !rows[b.name]).length;
       const header = h("div", { style: S.bar },
-        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v15"),
+        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v16"),
         h("span", { style: S.muted },
           state.status === "loading" ? "正在读取已安装组合包…" :
           state.status === "error" ? "读取失败" :
