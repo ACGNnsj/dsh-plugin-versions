@@ -136,10 +136,9 @@ window.__ModuleLoader__.load({
           borderRadius: "6px",
           color: "inherit",
           cursor: "pointer",
-          fontSize: "12px",
-          lineHeight: "18px",
-          opacity: 0.72,
-          padding: "2px 10px"
+          fontSize: "13px",
+          lineHeight: "20px",
+          padding: "6px 16px"
         },
         title: "跳到详情页底部（版本区块）",
         onClick: () => scrollPluginPageToBottom()
@@ -149,7 +148,7 @@ window.__ModuleLoader__.load({
     function BackToTopSection(props) {
       const subject = props && props.subject;
       if (subject && subject.kind && subject.kind !== "bundle") return null;
-      return h("div", { style: { display: "flex", justifyContent: "flex-end", padding: "10px 0 6px" } },
+      return h("div", { style: { display: "flex", justifyContent: "flex-start", padding: "10px 0 6px" } },
         h("button", {
           type: "button",
           style: {
@@ -158,9 +157,8 @@ window.__ModuleLoader__.load({
             borderRadius: "6px",
             color: "inherit",
             cursor: "pointer",
-            fontSize: "12px",
-            opacity: 0.72,
-            padding: "4px 10px"
+            fontSize: "13px",
+            padding: "6px 16px"
           },
           onClick: () => scrollPluginPageToTop()
         }, "↑ 回到顶部")
@@ -404,7 +402,7 @@ window.__ModuleLoader__.load({
       const failed = installed.filter((b) => rows[b.name] && rows[b.name].status === "error").length;
       const pending = installed.filter((b) => canCheckUpdates(b) && !rows[b.name]).length;
       const header = h("div", { style: S.bar },
-        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v19"),
+        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v20"),
         h("span", { style: S.muted },
           state.status === "loading" ? "正在读取已安装组合包…" :
           state.status === "error" ? "读取失败" :
