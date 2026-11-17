@@ -222,9 +222,10 @@ window.__ModuleLoader__.load({
     // 镜像没收录时自动回落到配置的 registry。第一次查询兼当测速，慢就退回宿主配置。
     const FAST_REGISTRY = "https://registry.npmmirror.com";
     const PROBE_MS = 3000;
-    // 走镜像时每次查询只有几百毫秒，可以多开几路（实测 9 个包：3 路 1.66s、6 路 1.13s、9 路 0.77s）；
+    // 走镜像时每次查询只有几百毫秒，可以多开几路（实测 12 个包：6 路 6.32s、9 路 6.06s、12 路 4.71s、16 路 5.18s）；
     // 退回慢 registry 时仍是 3 路，避免一次打出几十个 pnpm 去抢那条 1 秒一条的链路。
-    const FAST_CONCURRENCY = 6;
+    // ponytail: 全开到 min(12, rest.length)，镜像扛得住才这么干；宿主内层还有 4 并发，若以后镜像限流就调小。
+    const FAST_CONCURRENCY = 12;
 
     function readCache() {
       try {
@@ -403,7 +404,7 @@ window.__ModuleLoader__.load({
       const failed = installed.filter((b) => rows[b.name] && rows[b.name].status === "error").length;
       const pending = installed.filter((b) => canCheckUpdates(b) && !rows[b.name]).length;
       const header = h("div", { style: S.bar },
-        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v18"),
+        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v19"),
         h("span", { style: S.muted },
           state.status === "loading" ? "正在读取已安装组合包…" :
           state.status === "error" ? "读取失败" :
