@@ -33,25 +33,6 @@ window.__ModuleLoader__.load({
       return updateKind(b) === "registry" && b.official !== true;
     }
 
-    function describe(b) {
-      if (updateKind(b) === "registry") return "可更新";
-      if (!b.installed) return "未安装";
-      if (b.official) return "跟随 DSH";
-      if (b.optional) return "按需安装";
-      return "来源不支持更新";
-    }
-
-    function latestText(slot) {
-      if (!slot) return "—";
-      if (slot.status === "loading") return "检查中…";
-      if (slot.status === "error") return "检查失败";
-      const list = slot.list;
-      if (!list) return "—";
-      if (list.status === "refused") return list.problem === "not-updatable" ? "—" : "无法检查";
-      const first = list.versions && list.versions[0];
-      return first ? first.version : "已是最新";
-    }
-
     class TabBoundary extends React.Component {
       constructor(props) {
         super(props);
@@ -68,26 +49,26 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function pickScrollable() {
+      const all = document.querySelectorAll("div, main, section, article");
+      const out = [];
+      const minWidth = window.innerWidth * 0.6;
+      for (let i = 0; i < all.length; i += 1) {
+        const el = all[i];
+        if (el.scrollHeight - el.clientHeight <= 60) continue;
+        if (!/(auto|scroll)/.test(window.getComputedStyle(el).overflowY)) continue;
+        if (el.getBoundingClientRect().width < minWidth) continue;
+        out.push(el);
+      }
+      out.sort((a, b) => (b.clientHeight * b.clientWidth) - (a.clientHeight * a.clientWidth));
+      return out[0] || null;
+    }
+
     function scrollPluginPageToBottom() {
-      const scrollables = () => {
-        const out = [];
-        const all = document.querySelectorAll("div, main, section, article");
-        for (let i = 0; i < all.length; i += 1) {
-          const el = all[i];
-          if (el.scrollHeight - el.clientHeight <= 60) continue;
-          const cs = window.getComputedStyle(el);
-          if (!/(auto|scroll)/.test(cs.overflowY)) continue;
-          const r = el.getBoundingClientRect();
-          if (r.width < 400 || r.left < 180) continue;
-          out.push(el);
-        }
-        return out;
-      };
       const attempt = () => {
         try {
-          const els = scrollables();
-          els.sort((a, b) => (b.clientHeight * b.clientWidth) - (a.clientHeight * a.clientWidth));
-          if (els.length > 0) els[0].scrollTop = els[0].scrollHeight;
+          const el = pickScrollable();
+          if (el) el.scrollTop = el.scrollHeight;
           const doc = document.scrollingElement || document.documentElement;
           if (doc) doc.scrollTop = doc.scrollHeight;
         } catch (e) { /* 忽略：滚动只是锦上添花 */ }
@@ -104,19 +85,8 @@ window.__ModuleLoader__.load({
     function scrollPluginPageToTop() {
       const attempt = () => {
         try {
-          const all = document.querySelectorAll("div, main, section, article");
-          const out = [];
-          for (let i = 0; i < all.length; i += 1) {
-            const el = all[i];
-            if (el.scrollHeight - el.clientHeight <= 60) continue;
-            const cs = window.getComputedStyle(el);
-            if (!/(auto|scroll)/.test(cs.overflowY)) continue;
-            const r = el.getBoundingClientRect();
-            if (r.width < 400 || r.left < 180) continue;
-            out.push(el);
-          }
-          out.sort((a, b) => (b.clientHeight * b.clientWidth) - (a.clientHeight * a.clientWidth));
-          if (out.length > 0) out[0].scrollTop = 0;
+          const el = pickScrollable();
+          if (el) el.scrollTop = 0;
           const doc = document.scrollingElement || document.documentElement;
           if (doc) doc.scrollTop = 0;
         } catch (e) { /* 忽略：滚动失败不影响页面 */ }
@@ -338,9 +308,12 @@ window.__ModuleLoader__.load({
           .filter((b) => b && b.installed && b.name && canCheckUpdates(b))
           .slice()
           .sort((a, b) => age(a.name) - age(b.name));
-        const markLoading = (name) => setRows((prev) => ((prev[name] && prev[name].status === "ready")
-          ? prev
-          : Object.assign({}, prev, { [name]: { status: "loading" } })));
+        let localRows = rowsRef.current;
+        const markLoading = (name) => {
+          if (localRows[name] && localRows[name].status === "ready") return;
+          localRows = Object.assign({}, localRows, { [name]: { status: "loading" } });
+          setRows(localRows);
+        };
         const fetchOne = async (name, options) => {
           try {
             const res = await pmState.listVersions(name, options);
@@ -353,11 +326,16 @@ window.__ModuleLoader__.load({
             return { status: "error", error: String((err && err.message) || err) };
           }
         };
-        const commit = (name, next) => setRows((prev) => {
-          const nextRows = Object.assign({}, prev, { [name]: next });
-          writeCache(state.bundles, nextRows, Date.now());
-          return nextRows;
-        });
+        let sinceFlush = 0;
+        const commit = (name, next) => {
+          localRows = Object.assign({}, localRows, { [name]: next });
+          setRows(localRows);
+          sinceFlush += 1;
+          if (sinceFlush >= 10) {
+            sinceFlush = 0;
+            writeCache(state.bundles, localRows, Date.now());
+          }
+        };
         (async () => {
           let hint = FAST_REGISTRY;
           let rest = queue;
@@ -390,7 +368,9 @@ window.__ModuleLoader__.load({
           for (let i = 0; i < lanes; i += 1) workers.push(worker());
           await Promise.all(workers);
           if (cancelled) return;
-          setCheckedAt(Date.now());
+          const at = Date.now();
+          writeCache(state.bundles, localRows, at);
+          setCheckedAt(at);
           setRefreshing(false);
         })();
         return () => { cancelled = true; };
