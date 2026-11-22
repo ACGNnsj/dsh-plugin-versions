@@ -226,7 +226,8 @@ window.__ModuleLoader__.load({
     function clockText(ms) {
       try {
         const d = new Date(ms);
-        return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+        const pad = (n) => String(n).padStart(2, "0");
+        return pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
       } catch (e) { return ""; }
     }
 
@@ -243,9 +244,11 @@ window.__ModuleLoader__.load({
       const rowsRef = React.useRef(rows);
       rowsRef.current = rows;
       const [checkedAt, setCheckedAt] = React.useState(cached ? cached.at || 0 : 0);
+      const checkedAtRef = React.useRef(cached ? cached.at || 0 : 0);
       const [refreshing, setRefreshing] = React.useState(true);
       const [nonce, setNonce] = React.useState(0);
       const [pmState, setPmState] = React.useState(null);
+      const [query, setQuery] = React.useState("");
 
       React.useEffect(() => {
         let cancelled = false;
@@ -269,15 +272,17 @@ window.__ModuleLoader__.load({
             if (res && res.ok === false) {
               const e = res.error || {};
               setState({ status: "error", bundles: [], error: String(e.message || e.code || "listBundles 失败") });
+              setRefreshing(false);
               return;
             }
             const value = res && res.ok === true ? res.value : res;
             const list = Array.isArray(value) ? value : [];
             setState({ status: "ready", bundles: list, error: null });
-            setRows((prev) => { writeCache(list, prev, Date.now()); return prev; });
+            setRows((prev) => { writeCache(list, prev, checkedAtRef.current); return prev; });
           }).catch((err) => {
             if (cancelled) return;
             setState({ status: "error", bundles: [], error: String((err && err.message) || err) });
+            setRefreshing(false);
           });
         };
 
@@ -291,6 +296,7 @@ window.__ModuleLoader__.load({
           if (tries < 12) { timer = setTimeout(attempt, 250); return; }
           const why = describe(err);
           setState({ status: "error", bundles: [], error: "拿不到 pluginManager。" + why });
+          setRefreshing(false);
         };
 
         attempt();
@@ -327,13 +333,15 @@ window.__ModuleLoader__.load({
           }
         };
         let sinceFlush = 0;
+        let successful = 0;
         const commit = (name, next) => {
           localRows = Object.assign({}, localRows, { [name]: next });
+          if (next && next.status === "ready" && next.list && next.list.status === "listed") successful += 1;
           setRows(localRows);
           sinceFlush += 1;
           if (sinceFlush >= 10) {
             sinceFlush = 0;
-            writeCache(state.bundles, localRows, Date.now());
+            writeCache(state.bundles, localRows, checkedAtRef.current);
           }
         };
         (async () => {
@@ -368,32 +376,56 @@ window.__ModuleLoader__.load({
           for (let i = 0; i < lanes; i += 1) workers.push(worker());
           await Promise.all(workers);
           if (cancelled) return;
-          const at = Date.now();
-          writeCache(state.bundles, localRows, at);
-          setCheckedAt(at);
+          if (successful > 0) {
+            const at = Date.now();
+            checkedAtRef.current = at;
+            writeCache(state.bundles, localRows, at);
+            setCheckedAt(at);
+          } else {
+            writeCache(state.bundles, localRows, checkedAtRef.current);
+          }
           setRefreshing(false);
         })();
         return () => { cancelled = true; };
       }, [state.status, state.bundles, pmState]);
 
+      const isFailedSlot = (slot) => {
+        if (!slot) return false;
+        if (slot.status === "error") return true;
+        const pr = slot.list && slot.list.problem;
+        return slot.status === "ready" && (pr === "network" || pr === "not-found" || pr === "unknown");
+      };
       const installed = state.bundles.filter((b) => b && b.installed === true);
       const checked = installed.filter((b) => rows[b.name] && rows[b.name].status === "ready" && rows[b.name].list && rows[b.name].list.status === "listed");
       const newer = checked.filter((b) => (rows[b.name].list.versions || []).some((v) => isNewer(v && v.version, b.version))).length;
-      const failed = installed.filter((b) => rows[b.name] && rows[b.name].status === "error").length;
-      const pending = installed.filter((b) => canCheckUpdates(b) && !rows[b.name]).length;
-      const header = h("div", { style: S.bar },
-        h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v20"),
-        h("span", { style: S.muted },
-          state.status === "loading" ? "正在读取已安装组合包…" :
-          state.status === "error" ? "读取失败" :
-          ((newer > 0 ? newer + " 个可更新" : (pending > 0 ? "正在检查…" : (checked.length === 0 ? "没有可查的第三方包" : "全部已是最新"))) + (failed > 0 ? " · " + failed + " 个检查失败" : "") + " · 共 " + installed.length + " 个已安装")),
-        h("span", { style: { opacity: 0.5, fontSize: "11px", marginLeft: "8px" } },
-          checkedAt ? ("检查于 " + clockText(checkedAt)) : ""),
-        refreshing && state.status !== "loading"
-          ? h("span", { style: { opacity: 0.5, fontSize: "11px", marginLeft: "6px" } }, "刷新中…")
-          : null,
-        h("span", { style: { flex: "1 1 auto" } }),
-        h("button", { style: S.btn, onClick: () => setNonce(nonce + 1), disabled: state.status === "loading" }, "刷新")
+      const failed = installed.filter((b) => isFailedSlot(rows[b.name])).length;
+      const pending = installed.filter((b) => canCheckUpdates(b) && (!rows[b.name] || rows[b.name].status === "loading")).length;
+      const q = query.trim().toLowerCase();
+      const summary = state.status === "loading" ? "正在读取已安装组合包…" :
+        state.status === "error" ? "读取失败" :
+        ((newer > 0 ? newer + " 个更高发布版" : (pending > 0 ? "正在检查…" : (checked.length === 0 ? "没有可查的第三方包" : (failed > 0 ? "部分检查失败" : "所查源未发现更高版本")))) + (failed > 0 ? " · " + failed + " 个检查失败" : "") + " · 共 " + installed.length + " 个已安装");
+      const header = h("div", { style: { display: "flex", flexDirection: "column", gap: "6px" } },
+        h("div", { style: S.bar },
+          h("span", { style: { opacity: 0.45, fontSize: "11px" } }, "版本一览 v20"),
+          h("span", { style: S.muted }, summary),
+          h("span", { style: { opacity: 0.5, fontSize: "11px", marginLeft: "8px" } },
+            checkedAt ? ("检查于 " + clockText(checkedAt)) : ""),
+          refreshing && state.status !== "loading"
+            ? h("span", { style: { opacity: 0.5, fontSize: "11px", marginLeft: "6px" } }, "刷新中…")
+            : null,
+          h("span", { style: { flex: "1 1 auto" } }),
+          h("button", { style: S.btn, onClick: () => setNonce(nonce + 1), disabled: state.status === "loading" }, "刷新")
+        ),
+        h("div", { style: S.bar },
+          h("input", {
+            value: query,
+            placeholder: "搜索包名…",
+            "aria-label": "搜索包名",
+            onChange: (e) => setQuery(e.target.value),
+            style: { font: "inherit", color: "inherit", background: "transparent", border: "1px solid rgba(128,128,128,0.35)", borderRadius: "6px", padding: "2px 8px", minWidth: "180px" }
+          }),
+          q ? h("span", { style: S.muted }, "命中 " + installed.filter((b) => String(b.name || "").toLowerCase().includes(q)).length + " / " + installed.length) : null
+        )
       );
 
       if (state.status === "error") {
@@ -415,7 +447,8 @@ window.__ModuleLoader__.load({
         if (ua === ub) return String(a.name).localeCompare(String(b.name));
         return ua ? -1 : 1;
       });
-      const list = ordered.map((b) => {
+      const visible = q ? ordered.filter((b) => String(b.name || "").toLowerCase().includes(q)) : ordered;
+      const list = visible.map((b) => {
         const slot = rows[b.name] || null;
         const canCheck = canCheckUpdates(b);
         const canOpen = typeof openPackage === "function" && canCheck;
@@ -437,44 +470,77 @@ window.__ModuleLoader__.load({
           statusText = "无官方版本区块";
           latestTitle = "这个包不是从 registry 安装的，官方不给版本区块";
         } else if (!slot) {
+          statusText = "排队等待…";
+          latestCell = "…";
+        } else if (slot.status === "loading") {
           statusText = "检查中…";
           latestCell = "…";
         } else if (slot.status === "error") {
           statusText = "检查失败";
           latestCell = String(slot.error || "未知错误").slice(0, 34);
           latestTitle = String(slot.error || "未知错误");
-          tone = S.upd;
+          tone = S.err;
         } else if (!listed) {
           const pr = slot.list && slot.list.problem;
-          statusText = pr === "network" ? "网络不可达" : pr === "not-found" ? "注册表未找到" : pr === "not-updatable" ? "无可查版本" : "无法查询";
-          latestTitle = (slot.list && slot.list.reason) || "";
+          if (pr === "network" || pr === "not-found" || pr === "unknown") {
+            statusText = "检查失败";
+            latestCell = String((slot.list && slot.list.reason) || "未知错误").slice(0, 34);
+            latestTitle = String((slot.list && slot.list.reason) || "");
+            tone = S.err;
+          } else {
+            statusText = pr === "not-updatable" ? "无可查版本" : "无法查询";
+            latestTitle = (slot.list && slot.list.reason) || "";
+          }
         } else if (newest) {
-          statusText = "可更新到 " + newest.version;
+          statusText = "更高发布版 " + newest.version;
           latestCell = newest.version;
           tone = S.upd;
+          const flags = [];
+          if (newest.prerelease || /-/.test(String(newest.version || ""))) flags.push("预发布");
+          if (newest.deprecated) flags.push("弃用" + (typeof newest.deprecated === "string" ? "：" + newest.deprecated : ""));
+          if (newest.bundle === false) flags.push("非组合包");
+          if (newest.incompatible) flags.push("宿主判不兼容" + (newest.requires || newest.requiredRange ? "，需要 " + (newest.requires || newest.requiredRange) : ""));
+          const src = "作答源：" + (listed.registry || "pnpm 配置源") + (listed.omitted ? " · 列表被截断，未完整列出" : "");
+          latestTitle = src + (flags.length ? " · " + flags.join(" · ") : "");
         } else {
-          statusText = "已是最新";
+          statusText = "所查源未发现更高版本";
+          latestTitle = "作答源：" + (listed.registry || "pnpm 配置源") + (listed.omitted ? " · 列表被截断，未完整列出" : "");
         }
         const badge = Object.assign({}, S.badge, tone || {});
+        const nameNode = canOpen
+          ? h("button", {
+              type: "button",
+              title: (b.description || b.name) + (latestTitle ? " · " + latestTitle : ""),
+              onClick: (e) => { if (e && e.stopPropagation) e.stopPropagation(); openPackage(b.name); scrollPluginPageToBottom(); },
+              style: Object.assign({}, S.name, { font: "inherit", color: "inherit", background: "transparent", border: "none", padding: 0, cursor: "pointer", textAlign: "left" })
+            }, b.name)
+          : h("span", { style: S.name }, b.name);
         return h("div", {
           key: b.name,
           style: Object.assign({}, S.row, canOpen ? S.click : {}),
           title: (b.description || b.name) + (latestTitle ? " · " + latestTitle : ""),
           onClick: canOpen ? () => { openPackage(b.name); scrollPluginPageToBottom(); } : undefined
         },
-          h("span", { style: S.name }, b.name),
+          nameNode,
           h("span", null, b.version || "—"),
           h("span", { title: latestTitle || undefined }, latestCell),
           h("span", null, h("span", { style: badge }, statusText))
         );
       });
 
-      const firstErr = installed.map((b) => rows[b.name]).filter((r) => r && r.status === "error")[0];
+      const firstErr = installed.map((b) => {
+        const r = rows[b.name];
+        if (!r || !isFailedSlot(r)) return null;
+        return r.status === "error" ? (r.error || "未知错误") : ((r.list && r.list.reason) || "未知错误");
+      }).filter(Boolean)[0];
+      const emptyHint = (q && visible.length === 0)
+        ? h("div", { style: Object.assign({}, S.row, S.muted) }, "没有匹配的组合包，清空搜索恢复全表。")
+        : null;
       return h("div", { style: S.root },
         header,
-        h("div", { style: S.table }, head, list),
+        h("div", { style: S.table }, head, list, emptyHint),
         h("div", { style: S.muted }, "点一行打开官方组合包页面；更新在官方的「版本」区块里完成。"),
-        firstErr ? h("div", { style: Object.assign({}, S.muted, { color: "#e06c75", whiteSpace: "pre-wrap" }) }, "首个错误原文：" + String(firstErr.error || "").slice(0, 300)) : null
+        firstErr ? h("div", { style: Object.assign({}, S.muted, { color: "#e06c75", whiteSpace: "pre-wrap" }) }, "首个错误原文：" + String(firstErr || "").slice(0, 300)) : null
       );
     }
 
